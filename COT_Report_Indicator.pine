@@ -16,7 +16,7 @@ indicator(title       = "Campus COT Report",
           overlay     = false,
           max_lines_count   = 500,
           max_labels_count  = 500,
-          explicit_plot_display = true)
+          explicit_plot_display = false)
 
 // ─────────────────────────────────────────────────────────────────────────────
 //  INPUTS
