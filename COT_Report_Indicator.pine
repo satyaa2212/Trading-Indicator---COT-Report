@@ -22,31 +22,18 @@ indicator(title       = "Campus COT Report",
 //  INPUTS
 // ─────────────────────────────────────────────────────────────────────────────
 
-// Market selection
-var string GRP_MKT = "Market Selection"
-market_choice = input.string(
-     title   = "Market",
-     defval  = "EUR/USD",
-     options = ["EUR/USD", "GBP/USD", "JPY/USD", "AUD/USD", "CAD/USD",
-                "CHF/USD", "NZD/USD", "Gold", "Silver", "Crude Oil WTI",
-                "Natural Gas", "Copper", "Corn", "Wheat", "Soybeans",
-                "S&P 500 E-mini", "Nasdaq 100 E-mini", "Dow Jones E-mini",
-                "10-Year T-Note", "30-Year T-Bond", "VIX"],
-     tooltip = "Select the market / instrument to display COT data for",
-     group   = GRP_MKT)
+// COT Index settings
+var string GRP_IDX = "COT Index Settings"
+use_cot_index   = input.bool(false,  "Show COT Index instead of Raw Net Positions", group = GRP_IDX)
+lookback_weeks  = input.int(52, "Lookback Weeks (COT Index)", minval = 13, maxval = 260, step = 1, group = GRP_IDX)
 
-// Report type
+// Report type (moved here from the removed Market Selection group)
 report_type = input.string(
      title   = "Report Type",
      defval  = "Disaggregated",
      options = ["Disaggregated", "Legacy"],
      tooltip = "Disaggregated separates Fund Managers and Producers; Legacy uses Commercials vs Non-Commercials",
-     group   = GRP_MKT)
-
-// COT Index settings
-var string GRP_IDX = "COT Index Settings"
-use_cot_index   = input.bool(false,  "Show COT Index instead of Raw Net Positions", group = GRP_IDX)
-lookback_weeks  = input.int(52, "Lookback Weeks (COT Index)", minval = 13, maxval = 260, step = 1, group = GRP_IDX)
+     group   = GRP_IDX)
 
 // Extreme levels
 var string GRP_EXT = "Extreme Levels & Alerts"
@@ -82,33 +69,119 @@ fill_area       = input.bool(false, "Fill Area Under Lines",    group = GRP_DISP
 //    NONREPT       = Non-Reportable (Small Speculators / Retail)
 // ─────────────────────────────────────────────────────────────────────────────
 
-// Returns the base CFTC contract code for the selected market
-f_cftc_code(string mkt) =>
-    switch mkt
-        "EUR/USD"         => "099741"
-        "GBP/USD"         => "096742"
-        "JPY/USD"         => "097741"
-        "AUD/USD"         => "232741"
-        "CAD/USD"         => "090741"
-        "CHF/USD"         => "092741"
-        "NZD/USD"         => "112741"
-        "Gold"            => "088691"
-        "Silver"          => "084691"
-        "Crude Oil WTI"   => "067651"
-        "Natural Gas"     => "023651"
-        "Copper"          => "085692"
-        "Corn"            => "002602"
-        "Wheat"           => "001602"
-        "Soybeans"        => "005602"
-        "S&P 500 E-mini"  => "13874A"
-        "Nasdaq 100 E-mini" => "209742"
-        "Dow Jones E-mini" => "12460P"
-        "10-Year T-Note"  => "043602"
-        "30-Year T-Bond"  => "020601"
-        "VIX"             => "1170E1"
-        => "099741"  // default: EUR/USD
+// Returns the base CFTC contract code for the auto-detected futures root (syminfo.root)
+f_cftc_code(string root) =>
+    switch root
+        // ── Currencies ───────────────────────────────────────────────────────
+        "6E"      => "099741"   // Euro FX
+        "EURUSD"  => "099741"
+        "EUR"     => "099741"
+        "6B"      => "096742"   // British Pound
+        "GBPUSD"  => "096742"
+        "GBP"     => "096742"
+        "6J"      => "097741"   // Japanese Yen
+        "JPYUSD"  => "097741"
+        "JPY"     => "097741"
+        "6A"      => "232741"   // Australian Dollar
+        "AUDUSD"  => "232741"
+        "AUD"     => "232741"
+        "6C"      => "090741"   // Canadian Dollar
+        "CADUSD"  => "090741"
+        "CAD"     => "090741"
+        "6S"      => "092741"   // Swiss Franc
+        "CHFUSD"  => "092741"
+        "CHF"     => "092741"
+        "6N"      => "112741"   // New Zealand Dollar
+        "NZDUSD"  => "112741"
+        "NZD"     => "112741"
+        "6M"      => "095741"   // Mexican Peso
+        "MXN"     => "095741"
+        "DX"      => "098662"   // US Dollar Index
+        "USDX"    => "098662"
+        "6R"      => "089741"   // Russian Ruble
+        "RUB"     => "089741"
+        "6L"      => "102741"   // Brazilian Real
+        "BRL"     => "102741"
+        // ── Metals ───────────────────────────────────────────────────────────
+        "GC"      => "088691"   // Gold
+        "GOLD"    => "088691"
+        "XAUUSD"  => "088691"
+        "XAU"     => "088691"
+        "SI"      => "084691"   // Silver
+        "XAGUSD"  => "084691"
+        "XAG"     => "084691"
+        "HG"      => "085692"   // Copper
+        "COPPER"  => "085692"
+        "PL"      => "076651"   // Platinum
+        "XPTUSD"  => "076651"
+        "PA"      => "075651"   // Palladium
+        "XPDUSD"  => "075651"
+        // ── Energy ───────────────────────────────────────────────────────────
+        "CL"      => "067651"   // Crude Oil WTI
+        "WTI"     => "067651"
+        "USOIL"   => "067651"
+        "NG"      => "023651"   // Natural Gas
+        "NATGAS"  => "023651"
+        "RB"      => "111659"   // Gasoline RBOB
+        "RBOB"    => "111659"
+        "HO"      => "022651"   // Heating Oil
+        "BZ"      => "06765T"   // Brent Crude
+        "UKOIL"   => "06765T"
+        "BRENT"   => "06765T"
+        // ── Grains & Agriculture ─────────────────────────────────────────────
+        "ZC"      => "002602"   // Corn
+        "CORN"    => "002602"
+        "ZW"      => "001602"   // Chicago Wheat (SRW)
+        "WHEAT"   => "001602"
+        "KE"      => "001612"   // KC Hard Red Winter Wheat
+        "ZS"      => "005602"   // Soybeans
+        "SOYBEAN" => "005602"
+        "ZM"      => "026603"   // Soybean Meal
+        "ZL"      => "007601"   // Soybean Oil
+        "ZO"      => "004603"   // Oats
+        "ZR"      => "039601"   // Rough Rice
+        // ── Softs ────────────────────────────────────────────────────────────
+        "KC"      => "083731"   // Coffee
+        "COFFEE"  => "083731"
+        "SB"      => "080732"   // Sugar No. 11
+        "SUGAR"   => "080732"
+        "CC"      => "073732"   // Cocoa
+        "COCOA"   => "073732"
+        "CT"      => "033661"   // Cotton No. 2
+        "COTTON"  => "033661"
+        "OJ"      => "040701"   // Orange Juice
+        // ── Livestock / Meats ────────────────────────────────────────────────
+        "LE"      => "057642"   // Live Cattle
+        "LC"      => "057642"
+        "HE"      => "054642"   // Lean Hogs
+        "LH"      => "054642"
+        "GF"      => "061641"   // Feeder Cattle
+        // ── Stock Indices ────────────────────────────────────────────────────
+        "ES"      => "13874A"   // S&P 500 E-mini
+        "SP"      => "13874A"
+        "SPX"     => "13874A"
+        "NQ"      => "209742"   // Nasdaq 100 E-mini
+        "NDX"     => "209742"
+        "YM"      => "12460P"   // Dow Jones E-mini
+        "DJIA"    => "12460P"
+        "RTY"     => "239742"   // Russell 2000 E-mini
+        "RUT"     => "239742"
+        "NKD"     => "240741"   // Nikkei 225 Dollar
+        // ── Interest Rates / Bonds ───────────────────────────────────────────
+        "ZN"      => "043602"   // 10-Year T-Note
+        "ZB"      => "020601"   // 30-Year T-Bond
+        "ZF"      => "044601"   // 5-Year T-Note
+        "ZT"      => "042601"   // 2-Year T-Note
+        "GE"      => "132741"   // Eurodollar
+        "SR3"     => "132741"   // SOFR 3-Month (shares CFTC code 132741 with GE/Eurodollar)
+        "ZQ"      => "132741"   // 30-Day Fed Funds
+        // ── Volatility ───────────────────────────────────────────────────────
+        "VX"      => "1170E1"   // VIX Futures
+        "VIX"     => "1170E1"
+        => ""       // unknown / not mapped
 
-cftc_code = f_cftc_code(market_choice)
+cftc_code        = f_cftc_code(syminfo.root)
+unknown_market   = cftc_code == ""   // true when syminfo.root has no CFTC mapping
 
 // Build COT data symbols
 // Disaggregated report symbols
@@ -155,11 +228,6 @@ leg_nr_short  = request.security(sym_leg_nr_short,  "W", close, ignore_invalid_s
 net_funds     = report_type == "Disaggregated" ? (mm_long  - mm_short)        : (leg_nc_long  - leg_nc_short)
 net_producers = report_type == "Disaggregated" ? (pm_long  - pm_short)        : (leg_com_long - leg_com_short)
 net_retail    = report_type == "Disaggregated" ? (nr_long  - nr_short)        : (leg_nr_long  - leg_nr_short)
-
-// Guard against na values
-net_funds     := na(net_funds)     ? 0 : net_funds
-net_producers := na(net_producers) ? 0 : net_producers
-net_retail    := na(net_retail)    ? 0 : net_retail
 
 // ─────────────────────────────────────────────────────────────────────────────
 //  COT INDEX (percentile ranking over lookback window)
@@ -394,5 +462,5 @@ if barstate.islast
 
     // Market row
     table.cell(info_table, 0, 4, "Market",  text_color = color.silver, text_size = size.tiny)
-    table.cell(info_table, 1, 4, market_choice, text_color = color.silver, text_size = size.tiny)
+    table.cell(info_table, 1, 4, unknown_market ? syminfo.root + " (Unknown Market)" : syminfo.root, text_color = color.silver, text_size = size.tiny)
     table.cell(info_table, 2, 4, report_type,   text_color = color.silver, text_size = size.tiny)
