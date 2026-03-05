@@ -10,7 +10,7 @@
 // Data source: TradingView COT symbols (COT: prefix)
 // Reference:   CFTC Disaggregated Futures Only / Legacy Futures Only reports
 
-//@version=5
+//@version=6
 indicator(title       = "Campus COT Report",
           shorttitle  = "COT Report",
           overlay     = false,
@@ -83,7 +83,7 @@ fill_area       = input.bool(false, "Fill Area Under Lines",    group = GRP_DISP
 // ─────────────────────────────────────────────────────────────────────────────
 
 // Returns the base CFTC contract code for the selected market
-f_cftc_code(mkt) =>
+f_cftc_code(string mkt) =>
     switch mkt
         "EUR/USD"         => "099741"
         "GBP/USD"         => "096742"
@@ -132,12 +132,6 @@ sym_leg_nr_short  = "COT:" + cftc_code + "_NONREPT_SHORT_ALL"
 // ─────────────────────────────────────────────────────────────────────────────
 
 // Fetch disaggregated data
-[mm_long_d,  mm_short_d]  = request.security_lower_tf(syminfo.tickerid, "W", [close, close], ignore_invalid_symbol = true) == [] ?
-     [request.security(sym_mm_long,  "W", close, ignore_invalid_symbol = true),
-      request.security(sym_mm_short, "W", close, ignore_invalid_symbol = true)] :
-     [request.security(sym_mm_long,  "W", close, ignore_invalid_symbol = true),
-      request.security(sym_mm_short, "W", close, ignore_invalid_symbol = true)]
-
 mm_long  = request.security(sym_mm_long,  "W", close, ignore_invalid_symbol = true)
 mm_short = request.security(sym_mm_short, "W", close, ignore_invalid_symbol = true)
 pm_long  = request.security(sym_pm_long,  "W", close, ignore_invalid_symbol = true)
@@ -271,12 +265,12 @@ fill(p_prod, p_prod_zero,
 //  COT INDEX EXTREME BANDS (only shown when use_cot_index = true)
 // ─────────────────────────────────────────────────────────────────────────────
 
-hline(use_cot_index and show_retail    and show_extremes ? extreme_high : na, "Retail Extreme High",    color_ext_hi, linestyle = hline.style_dashed, linewidth = 1)
-hline(use_cot_index and show_retail    and show_extremes ? extreme_low  : na, "Retail Extreme Low",     color_ext_lo, linestyle = hline.style_dashed, linewidth = 1)
-hline(use_cot_index and show_funds     and show_extremes ? extreme_high : na, "Funds Extreme High",     color_ext_hi, linestyle = hline.style_dashed, linewidth = 1)
-hline(use_cot_index and show_funds     and show_extremes ? extreme_low  : na, "Funds Extreme Low",      color_ext_lo, linestyle = hline.style_dashed, linewidth = 1)
-hline(use_cot_index and show_producers and show_extremes ? extreme_high : na, "Producers Extreme High", color_ext_hi, linestyle = hline.style_dashed, linewidth = 1)
-hline(use_cot_index and show_producers and show_extremes ? extreme_low  : na, "Producers Extreme Low",  color_ext_lo, linestyle = hline.style_dashed, linewidth = 1)
+plot(use_cot_index and show_retail    and show_extremes ? extreme_high : na, "Retail Extreme High",    color_ext_hi, style = plot.style_line, linewidth = 1, display = display.pane)
+plot(use_cot_index and show_retail    and show_extremes ? extreme_low  : na, "Retail Extreme Low",     color_ext_lo, style = plot.style_line, linewidth = 1, display = display.pane)
+plot(use_cot_index and show_funds     and show_extremes ? extreme_high : na, "Funds Extreme High",     color_ext_hi, style = plot.style_line, linewidth = 1, display = display.pane)
+plot(use_cot_index and show_funds     and show_extremes ? extreme_low  : na, "Funds Extreme Low",      color_ext_lo, style = plot.style_line, linewidth = 1, display = display.pane)
+plot(use_cot_index and show_producers and show_extremes ? extreme_high : na, "Producers Extreme High", color_ext_hi, style = plot.style_line, linewidth = 1, display = display.pane)
+plot(use_cot_index and show_producers and show_extremes ? extreme_low  : na, "Producers Extreme Low",  color_ext_lo, style = plot.style_line, linewidth = 1, display = display.pane)
 
 // ─────────────────────────────────────────────────────────────────────────────
 //  CURRENT VALUE LABELS  (rightmost bar)
