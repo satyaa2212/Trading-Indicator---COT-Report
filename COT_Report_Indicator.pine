@@ -1,0 +1,396 @@
+// This source code is subject to the terms of the Mozilla Public License 2.0
+// © Campus COT Report Indicator
+//
+// COT (Commitments of Traders) Report Indicator
+// Displays net positions for three trader categories across separate panels:
+//   • Retail Traders / Non-Reportable  (Red)
+//   • Fund Managers  / Managed Money   (Orange)
+//   • Producers & Users / Commercials  (Blue)
+//
+// Data source: TradingView COT symbols (COT: prefix)
+// Reference:   CFTC Disaggregated Futures Only / Legacy Futures Only reports
+
+//@version=5
+indicator(title       = "Campus COT Report",
+          shorttitle  = "COT Report",
+          overlay     = false,
+          max_lines_count   = 500,
+          max_labels_count  = 500,
+          explicit_plot_display = true)
+
+// ─────────────────────────────────────────────────────────────────────────────
+//  INPUTS
+// ─────────────────────────────────────────────────────────────────────────────
+
+// Market selection
+var string GRP_MKT = "Market Selection"
+market_choice = input.string(
+     title   = "Market",
+     defval  = "EUR/USD",
+     options = ["EUR/USD", "GBP/USD", "JPY/USD", "AUD/USD", "CAD/USD",
+                "CHF/USD", "NZD/USD", "Gold", "Silver", "Crude Oil WTI",
+                "Natural Gas", "Copper", "Corn", "Wheat", "Soybeans",
+                "S&P 500 E-mini", "Nasdaq 100 E-mini", "Dow Jones E-mini",
+                "10-Year T-Note", "30-Year T-Bond", "VIX"],
+     tooltip = "Select the market / instrument to display COT data for",
+     group   = GRP_MKT)
+
+// Report type
+report_type = input.string(
+     title   = "Report Type",
+     defval  = "Disaggregated",
+     options = ["Disaggregated", "Legacy"],
+     tooltip = "Disaggregated separates Fund Managers and Producers; Legacy uses Commercials vs Non-Commercials",
+     group   = GRP_MKT)
+
+// COT Index settings
+var string GRP_IDX = "COT Index Settings"
+use_cot_index   = input.bool(false,  "Show COT Index instead of Raw Net Positions", group = GRP_IDX)
+lookback_weeks  = input.int(52, "Lookback Weeks (COT Index)", minval = 13, maxval = 260, step = 1, group = GRP_IDX)
+
+// Extreme levels
+var string GRP_EXT = "Extreme Levels & Alerts"
+extreme_high    = input.int(90, "Extreme High Level (%)", minval = 50, maxval = 99,  group = GRP_EXT)
+extreme_low     = input.int(10, "Extreme Low Level (%)",  minval = 1,  maxval = 50,  group = GRP_EXT)
+show_extremes   = input.bool(true,  "Highlight Extreme Zones",    group = GRP_EXT)
+enable_alerts   = input.bool(false, "Enable Extreme Level Alerts", group = GRP_EXT)
+
+// Panel visibility
+var string GRP_VIS = "Panel Visibility"
+show_retail     = input.bool(true, "Show Retail / Non-Reportable Panel",   group = GRP_VIS)
+show_funds      = input.bool(true, "Show Fund Managers Panel",              group = GRP_VIS)
+show_producers  = input.bool(true, "Show Producers & Users / Commercials Panel", group = GRP_VIS)
+
+// Display options
+var string GRP_DISP = "Display Options"
+show_zero_line  = input.bool(true, "Show Zero Reference Line",  group = GRP_DISP)
+line_width      = input.int(2,   "Line Width", minval = 1, maxval = 4, group = GRP_DISP)
+show_labels     = input.bool(true, "Show Current Value Labels", group = GRP_DISP)
+fill_area       = input.bool(false, "Fill Area Under Lines",    group = GRP_DISP)
+
+// ─────────────────────────────────────────────────────────────────────────────
+//  COT SYMBOL MAPPING
+//  TradingView COT symbol format:  "COT:<CFTC_CODE>_<CATEGORY>_<METRIC>"
+//  Disaggregated categories:
+//    MMANAGER  = Managed Money (Fund Managers)
+//    PRODMERCH = Producer / Merchant / Processor / User (Commercials)
+//    NONREPT   = Non-Reportable (Retail)
+//    SWAP      = Swap Dealers
+//  Legacy categories:
+//    COMMERCIAL    = Commercial (Hedgers)
+//    NONCOMMERCIAL = Non-Commercial (Large Speculators)
+//    NONREPT       = Non-Reportable (Small Speculators / Retail)
+// ─────────────────────────────────────────────────────────────────────────────
+
+// Returns the base CFTC contract code for the selected market
+f_cftc_code(mkt) =>
+    switch mkt
+        "EUR/USD"         => "099741"
+        "GBP/USD"         => "096742"
+        "JPY/USD"         => "097741"
+        "AUD/USD"         => "232741"
+        "CAD/USD"         => "090741"
+        "CHF/USD"         => "092741"
+        "NZD/USD"         => "112741"
+        "Gold"            => "088691"
+        "Silver"          => "084691"
+        "Crude Oil WTI"   => "067651"
+        "Natural Gas"     => "023651"
+        "Copper"          => "085692"
+        "Corn"            => "002602"
+        "Wheat"           => "001602"
+        "Soybeans"        => "005602"
+        "S&P 500 E-mini"  => "13874A"
+        "Nasdaq 100 E-mini" => "209742"
+        "Dow Jones E-mini" => "12460P"
+        "10-Year T-Note"  => "043602"
+        "30-Year T-Bond"  => "020601"
+        "VIX"             => "1170E1"
+        => "099741"  // default: EUR/USD
+
+cftc_code = f_cftc_code(market_choice)
+
+// Build COT data symbols
+// Disaggregated report symbols
+sym_mm_long     = "COT:" + cftc_code + "_MMANAGER_LONG_ALL"
+sym_mm_short    = "COT:" + cftc_code + "_MMANAGER_SHORT_ALL"
+sym_pm_long     = "COT:" + cftc_code + "_PRODMERCH_LONG_ALL"
+sym_pm_short    = "COT:" + cftc_code + "_PRODMERCH_SHORT_ALL"
+sym_nr_long     = "COT:" + cftc_code + "_NONREPT_LONG_ALL"
+sym_nr_short    = "COT:" + cftc_code + "_NONREPT_SHORT_ALL"
+
+// Legacy report symbols (fallback / alternative)
+sym_leg_com_long  = "COT:" + cftc_code + "_COMMERCIAL_LONG_ALL"
+sym_leg_com_short = "COT:" + cftc_code + "_COMMERCIAL_SHORT_ALL"
+sym_leg_nc_long   = "COT:" + cftc_code + "_NONCOMMERCIAL_LONG_ALL"
+sym_leg_nc_short  = "COT:" + cftc_code + "_NONCOMMERCIAL_SHORT_ALL"
+sym_leg_nr_long   = "COT:" + cftc_code + "_NONREPT_LONG_ALL"
+sym_leg_nr_short  = "COT:" + cftc_code + "_NONREPT_SHORT_ALL"
+
+// ─────────────────────────────────────────────────────────────────────────────
+//  DATA FETCH
+// ─────────────────────────────────────────────────────────────────────────────
+
+// Fetch disaggregated data
+[mm_long_d,  mm_short_d]  = request.security_lower_tf(syminfo.tickerid, "W", [close, close], ignore_invalid_symbol = true) == [] ?
+     [request.security(sym_mm_long,  "W", close, ignore_invalid_symbol = true),
+      request.security(sym_mm_short, "W", close, ignore_invalid_symbol = true)] :
+     [request.security(sym_mm_long,  "W", close, ignore_invalid_symbol = true),
+      request.security(sym_mm_short, "W", close, ignore_invalid_symbol = true)]
+
+mm_long  = request.security(sym_mm_long,  "W", close, ignore_invalid_symbol = true)
+mm_short = request.security(sym_mm_short, "W", close, ignore_invalid_symbol = true)
+pm_long  = request.security(sym_pm_long,  "W", close, ignore_invalid_symbol = true)
+pm_short = request.security(sym_pm_short, "W", close, ignore_invalid_symbol = true)
+nr_long  = request.security(sym_nr_long,  "W", close, ignore_invalid_symbol = true)
+nr_short = request.security(sym_nr_short, "W", close, ignore_invalid_symbol = true)
+
+// Legacy data
+leg_com_long  = request.security(sym_leg_com_long,  "W", close, ignore_invalid_symbol = true)
+leg_com_short = request.security(sym_leg_com_short, "W", close, ignore_invalid_symbol = true)
+leg_nc_long   = request.security(sym_leg_nc_long,   "W", close, ignore_invalid_symbol = true)
+leg_nc_short  = request.security(sym_leg_nc_short,  "W", close, ignore_invalid_symbol = true)
+leg_nr_long   = request.security(sym_leg_nr_long,   "W", close, ignore_invalid_symbol = true)
+leg_nr_short  = request.security(sym_leg_nr_short,  "W", close, ignore_invalid_symbol = true)
+
+// ─────────────────────────────────────────────────────────────────────────────
+//  NET POSITION CALCULATION
+// ─────────────────────────────────────────────────────────────────────────────
+
+// Net = Long - Short for each category
+net_funds     = report_type == "Disaggregated" ? (mm_long  - mm_short)        : (leg_nc_long  - leg_nc_short)
+net_producers = report_type == "Disaggregated" ? (pm_long  - pm_short)        : (leg_com_long - leg_com_short)
+net_retail    = report_type == "Disaggregated" ? (nr_long  - nr_short)        : (leg_nr_long  - leg_nr_short)
+
+// Guard against na values
+net_funds     := na(net_funds)     ? 0 : net_funds
+net_producers := na(net_producers) ? 0 : net_producers
+net_retail    := na(net_retail)    ? 0 : net_retail
+
+// ─────────────────────────────────────────────────────────────────────────────
+//  COT INDEX (percentile ranking over lookback window)
+// ─────────────────────────────────────────────────────────────────────────────
+
+f_cot_index(series float src, simple int length) =>
+    float hi = ta.highest(src, length)
+    float lo = ta.lowest(src, length)
+    float rng = hi - lo
+    rng == 0 ? 50.0 : (src - lo) / rng * 100.0
+
+cot_idx_retail    = f_cot_index(net_retail,    lookback_weeks)
+cot_idx_funds     = f_cot_index(net_funds,     lookback_weeks)
+cot_idx_producers = f_cot_index(net_producers, lookback_weeks)
+
+// Choose between raw net positions and COT Index
+plot_retail    = use_cot_index ? cot_idx_retail    : net_retail
+plot_funds     = use_cot_index ? cot_idx_funds     : net_funds
+plot_producers = use_cot_index ? cot_idx_producers : net_producers
+
+// ─────────────────────────────────────────────────────────────────────────────
+//  COLORS
+// ─────────────────────────────────────────────────────────────────────────────
+
+color_retail    = color.new(#FF2D55, 0)   // Red
+color_funds     = color.new(#FF8C00, 0)   // Orange
+color_producers = color.new(#2979FF, 0)   // Blue
+color_zero      = color.new(color.gray, 60)
+color_ext_hi    = color.new(color.red,  85)
+color_ext_lo    = color.new(color.green, 85)
+
+// ─────────────────────────────────────────────────────────────────────────────
+//  PLOT — PANEL 1: RETAIL TRADERS  (displayed in pane 1)
+// ─────────────────────────────────────────────────────────────────────────────
+
+p_retail = plot(show_retail ? plot_retail : na,
+     title       = "Retail Traders (Non-Reportable) Net",
+     color       = color_retail,
+     linewidth   = line_width,
+     display     = display.pane,
+     force_overlay = false)
+
+p_retail_zero = plot(show_retail and show_zero_line ? 0 : na,
+     title       = "Retail Zero Line",
+     color       = color_zero,
+     linewidth   = 1,
+     style       = plot.style_line,
+     display     = display.pane,
+     force_overlay = false)
+
+// Fill under retail line
+fill(p_retail, p_retail_zero,
+     color = fill_area and show_retail ? color.new(color_retail, 85) : na,
+     title = "Retail Fill")
+
+// ─────────────────────────────────────────────────────────────────────────────
+//  PLOT — PANEL 2: FUND MANAGERS  (displayed in pane 2)
+// ─────────────────────────────────────────────────────────────────────────────
+
+p_funds = plot(show_funds ? plot_funds : na,
+     title       = "Fund Managers (Managed Money) Net",
+     color       = color_funds,
+     linewidth   = line_width,
+     display     = display.pane,
+     force_overlay = false)
+
+p_funds_zero = plot(show_funds and show_zero_line ? 0 : na,
+     title       = "Funds Zero Line",
+     color       = color_zero,
+     linewidth   = 1,
+     style       = plot.style_line,
+     display     = display.pane,
+     force_overlay = false)
+
+fill(p_funds, p_funds_zero,
+     color = fill_area and show_funds ? color.new(color_funds, 85) : na,
+     title = "Funds Fill")
+
+// ─────────────────────────────────────────────────────────────────────────────
+//  PLOT — PANEL 3: PRODUCERS & USERS  (displayed in pane 3)
+// ─────────────────────────────────────────────────────────────────────────────
+
+p_prod = plot(show_producers ? plot_producers : na,
+     title       = "Producers & Users (Commercials) Net",
+     color       = color_producers,
+     linewidth   = line_width,
+     display     = display.pane,
+     force_overlay = false)
+
+p_prod_zero = plot(show_producers and show_zero_line ? 0 : na,
+     title       = "Producers Zero Line",
+     color       = color_zero,
+     linewidth   = 1,
+     style       = plot.style_line,
+     display     = display.pane,
+     force_overlay = false)
+
+fill(p_prod, p_prod_zero,
+     color = fill_area and show_producers ? color.new(color_producers, 85) : na,
+     title = "Producers Fill")
+
+// ─────────────────────────────────────────────────────────────────────────────
+//  COT INDEX EXTREME BANDS (only shown when use_cot_index = true)
+// ─────────────────────────────────────────────────────────────────────────────
+
+hline(use_cot_index and show_retail    and show_extremes ? extreme_high : na, "Retail Extreme High",    color_ext_hi, linestyle = hline.style_dashed, linewidth = 1)
+hline(use_cot_index and show_retail    and show_extremes ? extreme_low  : na, "Retail Extreme Low",     color_ext_lo, linestyle = hline.style_dashed, linewidth = 1)
+hline(use_cot_index and show_funds     and show_extremes ? extreme_high : na, "Funds Extreme High",     color_ext_hi, linestyle = hline.style_dashed, linewidth = 1)
+hline(use_cot_index and show_funds     and show_extremes ? extreme_low  : na, "Funds Extreme Low",      color_ext_lo, linestyle = hline.style_dashed, linewidth = 1)
+hline(use_cot_index and show_producers and show_extremes ? extreme_high : na, "Producers Extreme High", color_ext_hi, linestyle = hline.style_dashed, linewidth = 1)
+hline(use_cot_index and show_producers and show_extremes ? extreme_low  : na, "Producers Extreme Low",  color_ext_lo, linestyle = hline.style_dashed, linewidth = 1)
+
+// ─────────────────────────────────────────────────────────────────────────────
+//  CURRENT VALUE LABELS  (rightmost bar)
+// ─────────────────────────────────────────────────────────────────────────────
+
+if barstate.islast and show_labels
+    if show_retail and not na(plot_retail)
+        label_txt_r = use_cot_index ?
+             "Retail COT Index: " + str.tostring(plot_retail, "#.##") + "%" :
+             "Retail Net: " + str.tostring(plot_retail, "#,###")
+        label.new(bar_index, plot_retail, label_txt_r,
+             xloc  = xloc.bar_index,
+             yloc  = yloc.price,
+             color = color_retail,
+             style = label.style_label_left,
+             textcolor = color.white,
+             size  = size.small)
+
+    if show_funds and not na(plot_funds)
+        label_txt_f = use_cot_index ?
+             "Funds COT Index: " + str.tostring(plot_funds, "#.##") + "%" :
+             "Funds Net: " + str.tostring(plot_funds, "#,###")
+        label.new(bar_index, plot_funds, label_txt_f,
+             xloc  = xloc.bar_index,
+             yloc  = yloc.price,
+             color = color_funds,
+             style = label.style_label_left,
+             textcolor = color.white,
+             size  = size.small)
+
+    if show_producers and not na(plot_producers)
+        label_txt_p = use_cot_index ?
+             "Producers COT Index: " + str.tostring(plot_producers, "#.##") + "%" :
+             "Producers Net: " + str.tostring(plot_producers, "#,###")
+        label.new(bar_index, plot_producers, label_txt_p,
+             xloc  = xloc.bar_index,
+             yloc  = yloc.price,
+             color = color_producers,
+             style = label.style_label_left,
+             textcolor = color.white,
+             size  = size.small)
+
+// ─────────────────────────────────────────────────────────────────────────────
+//  SIGNAL MARKERS  (potential reversal zones based on COT Index extremes)
+// ─────────────────────────────────────────────────────────────────────────────
+
+// Signals fire when COT Index crosses extreme thresholds
+retail_bull_signal    = use_cot_index and ta.crossover(cot_idx_retail,    extreme_low)
+retail_bear_signal    = use_cot_index and ta.crossunder(cot_idx_retail,   extreme_high)
+funds_bull_signal     = use_cot_index and ta.crossover(cot_idx_funds,     extreme_low)
+funds_bear_signal     = use_cot_index and ta.crossunder(cot_idx_funds,    extreme_high)
+producers_bull_signal = use_cot_index and ta.crossover(cot_idx_producers, extreme_low)
+producers_bear_signal = use_cot_index and ta.crossunder(cot_idx_producers, extreme_high)
+
+plotshape(show_retail    and retail_bull_signal,    title = "Retail Bull Signal",    style = shape.triangleup,   location = location.belowbar, color = color_retail,    size = size.small, text = "R↑")
+plotshape(show_retail    and retail_bear_signal,    title = "Retail Bear Signal",    style = shape.triangledown, location = location.abovebar, color = color_retail,    size = size.small, text = "R↓")
+plotshape(show_funds     and funds_bull_signal,     title = "Funds Bull Signal",     style = shape.triangleup,   location = location.belowbar, color = color_funds,     size = size.small, text = "F↑")
+plotshape(show_funds     and funds_bear_signal,     title = "Funds Bear Signal",     style = shape.triangledown, location = location.abovebar, color = color_funds,     size = size.small, text = "F↓")
+plotshape(show_producers and producers_bull_signal, title = "Producers Bull Signal", style = shape.triangleup,   location = location.belowbar, color = color_producers, size = size.small, text = "P↑")
+plotshape(show_producers and producers_bear_signal, title = "Producers Bear Signal", style = shape.triangledown, location = location.abovebar, color = color_producers, size = size.small, text = "P↓")
+
+// ─────────────────────────────────────────────────────────────────────────────
+//  ALERTS
+// ─────────────────────────────────────────────────────────────────────────────
+
+alertcondition(enable_alerts and (retail_bull_signal or retail_bear_signal),
+     title   = "COT Retail Extreme",
+     message = "COT Alert: Retail traders at extreme level for {{ticker}}")
+
+alertcondition(enable_alerts and (funds_bull_signal or funds_bear_signal),
+     title   = "COT Funds Extreme",
+     message = "COT Alert: Fund managers at extreme level for {{ticker}}")
+
+alertcondition(enable_alerts and (producers_bull_signal or producers_bear_signal),
+     title   = "COT Producers Extreme",
+     message = "COT Alert: Producers/Commercials at extreme level for {{ticker}}")
+
+alertcondition(enable_alerts and (retail_bull_signal or retail_bear_signal or
+     funds_bull_signal or funds_bear_signal or
+     producers_bull_signal or producers_bear_signal),
+     title   = "COT Any Extreme",
+     message = "COT Alert: Any trader category at extreme level for {{ticker}}")
+
+// ─────────────────────────────────────────────────────────────────────────────
+//  TABLE: DATA SUMMARY  (top-right corner)
+// ─────────────────────────────────────────────────────────────────────────────
+
+var table info_table = table.new(position.top_right, 3, 5,
+     bgcolor    = color.new(color.black, 80),
+     border_width = 1,
+     border_color = color.new(color.gray, 50))
+
+if barstate.islast
+    // Header row
+    table.cell(info_table, 0, 0, "Category",    text_color = color.white,      text_size = size.small, bgcolor = color.new(color.gray, 60))
+    table.cell(info_table, 1, 0, "Net Position", text_color = color.white,     text_size = size.small, bgcolor = color.new(color.gray, 60))
+    table.cell(info_table, 2, 0, "COT Index",    text_color = color.white,     text_size = size.small, bgcolor = color.new(color.gray, 60))
+
+    // Retail row
+    table.cell(info_table, 0, 1, "Retail",                text_color = color_retail,    text_size = size.small)
+    table.cell(info_table, 1, 1, str.tostring(net_retail,    "#,###"), text_color = color_retail,    text_size = size.small)
+    table.cell(info_table, 2, 1, str.tostring(cot_idx_retail,    "#.#") + "%", text_color = color_retail,    text_size = size.small)
+
+    // Funds row
+    table.cell(info_table, 0, 2, "Funds",                 text_color = color_funds,     text_size = size.small)
+    table.cell(info_table, 1, 2, str.tostring(net_funds,     "#,###"), text_color = color_funds,     text_size = size.small)
+    table.cell(info_table, 2, 2, str.tostring(cot_idx_funds,     "#.#") + "%", text_color = color_funds,     text_size = size.small)
+
+    // Producers row
+    table.cell(info_table, 0, 3, "Producers",             text_color = color_producers, text_size = size.small)
+    table.cell(info_table, 1, 3, str.tostring(net_producers, "#,###"), text_color = color_producers, text_size = size.small)
+    table.cell(info_table, 2, 3, str.tostring(cot_idx_producers, "#.#") + "%", text_color = color_producers, text_size = size.small)
+
+    // Market row
+    table.cell(info_table, 0, 4, "Market",  text_color = color.silver, text_size = size.tiny)
+    table.cell(info_table, 1, 4, market_choice, text_color = color.silver, text_size = size.tiny)
+    table.cell(info_table, 2, 4, report_type,   text_color = color.silver, text_size = size.tiny)
