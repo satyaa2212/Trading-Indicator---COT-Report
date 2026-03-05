@@ -317,13 +317,21 @@ if barstate.islast and show_labels
 //  SIGNAL MARKERS  (potential reversal zones based on COT Index extremes)
 // ─────────────────────────────────────────────────────────────────────────────
 
+// Pre-compute crossover/crossunder on every bar to avoid inconsistent calculations
+_retail_cross_up      = ta.crossover(cot_idx_retail,     extreme_low)
+_retail_cross_down    = ta.crossunder(cot_idx_retail,    extreme_high)
+_funds_cross_up       = ta.crossover(cot_idx_funds,      extreme_low)
+_funds_cross_down     = ta.crossunder(cot_idx_funds,     extreme_high)
+_producers_cross_up   = ta.crossover(cot_idx_producers,  extreme_low)
+_producers_cross_down = ta.crossunder(cot_idx_producers, extreme_high)
+
 // Signals fire when COT Index crosses extreme thresholds
-retail_bull_signal    = use_cot_index and ta.crossover(cot_idx_retail,    extreme_low)
-retail_bear_signal    = use_cot_index and ta.crossunder(cot_idx_retail,   extreme_high)
-funds_bull_signal     = use_cot_index and ta.crossover(cot_idx_funds,     extreme_low)
-funds_bear_signal     = use_cot_index and ta.crossunder(cot_idx_funds,    extreme_high)
-producers_bull_signal = use_cot_index and ta.crossover(cot_idx_producers, extreme_low)
-producers_bear_signal = use_cot_index and ta.crossunder(cot_idx_producers, extreme_high)
+retail_bull_signal    = use_cot_index and _retail_cross_up
+retail_bear_signal    = use_cot_index and _retail_cross_down
+funds_bull_signal     = use_cot_index and _funds_cross_up
+funds_bear_signal     = use_cot_index and _funds_cross_down
+producers_bull_signal = use_cot_index and _producers_cross_up
+producers_bear_signal = use_cot_index and _producers_cross_down
 
 plotshape(show_retail    and retail_bull_signal,    title = "Retail Bull Signal",    style = shape.triangleup,   location = location.belowbar, color = color_retail,    size = size.small, text = "R↑")
 plotshape(show_retail    and retail_bear_signal,    title = "Retail Bear Signal",    style = shape.triangledown, location = location.abovebar, color = color_retail,    size = size.small, text = "R↓")
