@@ -1,0 +1,283 @@
+// This Pine Script® code is subject to the terms of the Mozilla Public License 2.0
+// © COT Report Indicator v1.0
+// Displays Commitment of Traders (COT) report data for Forex, Commodities, and Indices
+
+//@version=6
+indicator(title="COT Report Indicator", shorttitle="COT Report", overlay=false, max_lines_count=5)
+
+// ============================================================
+//  SECTION 1: INPUT SETTINGS
+// ============================================================
+
+// --- Market Selector ---
+var string GRP_MARKET = "Market Selection"
+market_choice = input.string(
+     defval  = "EUR (Euro FX)",
+     title   = "Market",
+     options = [
+         // Forex
+         "EUR (Euro FX)",
+         "GBP (British Pound)",
+         "JPY (Japanese Yen)",
+         "AUD (Australian Dollar)",
+         "CAD (Canadian Dollar)",
+         "CHF (Swiss Franc)",
+         "NZD (New Zealand Dollar)",
+         // Commodities
+         "Gold",
+         "Silver",
+         "Crude Oil (WTI)",
+         "Natural Gas",
+         "Copper",
+         "Corn",
+         "Soybeans",
+         "Wheat",
+         // Indices
+         "S&P 500 (E-mini)",
+         "Nasdaq 100 (E-mini)",
+         "Dow Jones (E-mini)",
+         "Russell 2000 (E-mini)"
+     ],
+     tooltip = "Select the futures market for which to display COT data.",
+     group   = GRP_MARKET)
+
+// --- Display Mode ---
+var string GRP_DISPLAY = "Display Settings"
+display_mode = input.string(
+     defval  = "Net Positions",
+     title   = "Display Mode",
+     options = ["Net Positions", "COT Index"],
+     tooltip = "Net Positions: raw longs minus shorts.\nCOT Index: normalized 0–100 over the lookback period.",
+     group   = GRP_DISPLAY)
+
+lookback = input.int(
+     defval  = 26,
+     minval  = 2,
+     maxval  = 260,
+     title   = "COT Index Lookback (weeks)",
+     tooltip = "Number of weekly bars used to normalize the COT Index. Default is 26 (≈6 months).",
+     group   = GRP_DISPLAY)
+
+// --- Show / Hide Toggles ---
+var string GRP_SHOW = "Show / Hide"
+show_commercials    = input.bool(true,  "Show Commercials (Hedgers)",          group=GRP_SHOW)
+show_large_specs    = input.bool(true,  "Show Large Speculators (Non-Comm.)",  group=GRP_SHOW)
+show_small_specs    = input.bool(true,  "Show Small Speculators (Non-Rep.)",   group=GRP_SHOW)
+show_open_interest  = input.bool(false, "Show Open Interest",                  group=GRP_SHOW)
+show_zero_line      = input.bool(true,  "Show Zero Line (Net Positions mode)", group=GRP_SHOW)
+
+// --- Color Settings ---
+var string GRP_COLORS = "Colors"
+color_commercials   = input.color(color.green,  "Commercials Color",      group=GRP_COLORS)
+color_large_specs   = input.color(color.blue,   "Large Specs Color",      group=GRP_COLORS)
+color_small_specs   = input.color(color.red,    "Small Specs Color",      group=GRP_COLORS)
+color_open_interest = input.color(color.gray,   "Open Interest Color",    group=GRP_COLORS)
+
+// ============================================================
+//  SECTION 2: CFTC TICKER MAPPING
+//  TradingView CFTC legacy COT ticker format:
+//      CFTC:<CODE>_F_L_ALL  (futures-only, legacy, all)
+//  Source codes obtained from CFTC / TradingView symbol catalogue.
+// ============================================================
+
+// Returns the TradingView CFTC root symbol for the selected market.
+f_get_cot_symbol(mkt) =>
+    switch mkt
+        // ----- Forex -----
+        "EUR (Euro FX)"        => "CFTC:099741_F_L_ALL"
+        "GBP (British Pound)"  => "CFTC:096742_F_L_ALL"
+        "JPY (Japanese Yen)"   => "CFTC:097741_F_L_ALL"
+        "AUD (Australian Dollar)" => "CFTC:232741_F_L_ALL"
+        "CAD (Canadian Dollar)"   => "CFTC:090741_F_L_ALL"
+        "CHF (Swiss Franc)"       => "CFTC:092741_F_L_ALL"
+        "NZD (New Zealand Dollar)"=> "CFTC:112741_F_L_ALL"
+        // ----- Commodities -----
+        "Gold"                 => "CFTC:088691_F_L_ALL"
+        "Silver"               => "CFTC:084691_F_L_ALL"
+        "Crude Oil (WTI)"      => "CFTC:067651_F_L_ALL"
+        "Natural Gas"          => "CFTC:023651_F_L_ALL"
+        "Copper"               => "CFTC:085692_F_L_ALL"
+        "Corn"                 => "CFTC:002602_F_L_ALL"
+        "Soybeans"             => "CFTC:005602_F_L_ALL"
+        "Wheat"                => "CFTC:001602_F_L_ALL"
+        // ----- Indices -----
+        "S&P 500 (E-mini)"     => "CFTC:13874A_F_L_ALL"
+        "Nasdaq 100 (E-mini)"  => "CFTC:209742_F_L_ALL"
+        "Dow Jones (E-mini)"   => "CFTC:124603_F_L_ALL"
+        "Russell 2000 (E-mini)"=> "CFTC:239742_F_L_ALL"
+        => "CFTC:099741_F_L_ALL"  // fallback: EUR
+
+cot_sym = f_get_cot_symbol(market_choice)
+
+// ============================================================
+//  SECTION 3: DATA FETCHING VIA request.security()
+//  Each CFTC legacy COT ticker exposes the following fields
+//  (accessed as ticker field suffixes on TradingView):
+//
+//  Commercials (Hedgers):
+//    Comm_Positions_Long_All      / Comm_Positions_Short_All
+//  Large Specs (Non-Commercial):
+//    NonComm_Positions_Long_All   / NonComm_Positions_Short_All
+//  Small Specs (Non-Reportable):
+//    NonRept_Positions_Long_All   / NonRept_Positions_Short_All
+//  Open Interest:
+//    Open_Interest_All
+//
+//  NOTE: COT data is released weekly; request.security() with
+//        gaps=barmerge.gaps_off will forward-fill the weekly
+//        value across all intraday / daily bars automatically.
+// ============================================================
+
+// Helper: fetch a single CFTC field from the COT symbol.
+// We always fetch on the "1W" timeframe so the weekly data
+// aligns correctly regardless of the chart timeframe.
+f_fetch(sym, field) =>
+    request.security(
+         symbol    = sym + ":" + field,
+         timeframe = "W",
+         expression = close,
+         gaps      = barmerge.gaps_off)
+
+// Fetch raw position data
+comm_long   = f_fetch(cot_sym, "Comm_Positions_Long_All")
+comm_short  = f_fetch(cot_sym, "Comm_Positions_Short_All")
+lspec_long  = f_fetch(cot_sym, "NonComm_Positions_Long_All")
+lspec_short = f_fetch(cot_sym, "NonComm_Positions_Short_All")
+sspec_long  = f_fetch(cot_sym, "NonRept_Positions_Long_All")
+sspec_short = f_fetch(cot_sym, "NonRept_Positions_Short_All")
+open_int    = f_fetch(cot_sym, "Open_Interest_All")
+
+// ============================================================
+//  SECTION 4: NET POSITION CALCULATIONS
+// ============================================================
+
+net_comm   = comm_long  - comm_short   // Commercials (Hedgers)
+net_lspec  = lspec_long - lspec_short  // Large Speculators
+net_sspec  = sspec_long - sspec_short  // Small Speculators
+
+// ============================================================
+//  SECTION 5: COT INDEX CALCULATION
+//  COT Index = ((Current - Lowest) / (Highest - Lowest)) * 100
+//  Calculated over the user-defined lookback period (in weeks).
+//  Values are clamped to [0, 100] to handle edge cases where
+//  current value slightly exceeds the lookback extremes.
+// ============================================================
+
+f_cot_index(net_series, lb) =>
+    lo  = ta.lowest(net_series,  lb)
+    hi  = ta.highest(net_series, lb)
+    rng = hi - lo
+    // Avoid division by zero when range is flat
+    idx = rng != 0 ? (net_series - lo) / rng * 100 : 50.0
+    math.max(0.0, math.min(100.0, idx))
+
+idx_comm  = f_cot_index(net_comm,  lookback)
+idx_lspec = f_cot_index(net_lspec, lookback)
+idx_sspec = f_cot_index(net_sspec, lookback)
+
+// ============================================================
+//  SECTION 6: SELECT VALUES BASED ON DISPLAY MODE
+// ============================================================
+
+is_index_mode = display_mode == "COT Index"
+
+val_comm  = is_index_mode ? idx_comm  : net_comm
+val_lspec = is_index_mode ? idx_lspec : net_lspec
+val_sspec = is_index_mode ? idx_sspec : net_sspec
+
+// ============================================================
+//  SECTION 7: PLOTTING
+// ============================================================
+
+// --- Commercials (Hedgers) ---
+plot(
+     show_commercials ? val_comm : na,
+     title  = "Commercials (Hedgers)",
+     color  = color_commercials,
+     linewidth = 2,
+     style  = plot.style_line)
+
+// --- Large Speculators (Non-Commercial) ---
+plot(
+     show_large_specs ? val_lspec : na,
+     title  = "Large Speculators",
+     color  = color_large_specs,
+     linewidth = 2,
+     style  = plot.style_line)
+
+// --- Small Speculators (Non-Reportable) ---
+plot(
+     show_small_specs ? val_sspec : na,
+     title  = "Small Speculators",
+     color  = color_small_specs,
+     linewidth = 2,
+     style  = plot.style_line)
+
+// --- Open Interest (optional; only in Net Positions mode for scale clarity) ---
+plot(
+     show_open_interest ? open_int : na,
+     title     = "Open Interest",
+     color     = color_open_interest,
+     linewidth = 1,
+     style     = plot.style_line)
+
+// --- Zero / Reference Lines ---
+// In Net Positions mode: show zero line if enabled.
+// In COT Index mode: show fixed reference lines at 25, 50, 75.
+hline(
+     price      = not is_index_mode and show_zero_line ? 0 : na,
+     title      = "Zero Line",
+     color      = color.new(color.white, 50),
+     linestyle  = hline.style_dashed,
+     linewidth  = 1)
+
+hline(
+     price      = is_index_mode ? 75 : na,
+     title      = "Overbought (75)",
+     color      = color.new(color.orange, 40),
+     linestyle  = hline.style_dotted,
+     linewidth  = 1)
+
+hline(
+     price      = is_index_mode ? 50 : na,
+     title      = "Midline (50)",
+     color      = color.new(color.white, 60),
+     linestyle  = hline.style_dotted,
+     linewidth  = 1)
+
+hline(
+     price      = is_index_mode ? 25 : na,
+     title      = "Oversold (25)",
+     color      = color.new(color.orange, 40),
+     linestyle  = hline.style_dotted,
+     linewidth  = 1)
+
+// ============================================================
+//  SECTION 8: INFO TABLE
+//  Displays current values in a compact corner table.
+// ============================================================
+
+var table info_tbl = table.new(
+     position          = position.top_right,
+     columns           = 2,
+     rows              = 6,
+     bgcolor           = color.new(color.black, 70),
+     border_width      = 1,
+     border_color      = color.new(color.white, 80),
+     frame_width       = 1,
+     frame_color       = color.new(color.white, 60))
+
+if barstate.islast
+    mode_lbl = is_index_mode ? "COT Index" : "Net Positions"
+    table.cell(info_tbl, 0, 0, "Market",        text_color=color.white,  text_size=size.small, bgcolor=color.new(color.navy, 40))
+    table.cell(info_tbl, 1, 0, market_choice,   text_color=color.yellow, text_size=size.small, bgcolor=color.new(color.navy, 40))
+    table.cell(info_tbl, 0, 1, "Mode",          text_color=color.white,  text_size=size.small)
+    table.cell(info_tbl, 1, 1, mode_lbl,        text_color=color.yellow, text_size=size.small)
+    table.cell(info_tbl, 0, 2, "Commercials",   text_color=color_commercials,  text_size=size.small)
+    table.cell(info_tbl, 1, 2, str.tostring(math.round(val_comm, 1)),  text_color=color_commercials,  text_size=size.small)
+    table.cell(info_tbl, 0, 3, "Large Specs",   text_color=color_large_specs,  text_size=size.small)
+    table.cell(info_tbl, 1, 3, str.tostring(math.round(val_lspec, 1)), text_color=color_large_specs,  text_size=size.small)
+    table.cell(info_tbl, 0, 4, "Small Specs",   text_color=color_small_specs,  text_size=size.small)
+    table.cell(info_tbl, 1, 4, str.tostring(math.round(val_sspec, 1)), text_color=color_small_specs,  text_size=size.small)
+    table.cell(info_tbl, 0, 5, "Open Interest", text_color=color_open_interest, text_size=size.small)
+    table.cell(info_tbl, 1, 5, str.tostring(math.round(open_int, 0)),  text_color=color_open_interest, text_size=size.small)
