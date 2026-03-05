@@ -11,7 +11,7 @@ This repository contains:
 
 | File | Purpose |
 |---|---|
-| `COT_Report_Indicator.pine` | TradingView Pine Script v5 indicator |
+| `COT_Report_Indicator.pine` | TradingView Pine Script v6 indicator |
 | `python/cot_fetcher.py` | Python auto-fetch, analysis & interactive charting |
 | `python/config.py` | Market codes, URLs, colour constants |
 | `python/requirements.txt` | Python package dependencies |
@@ -39,7 +39,7 @@ Each panel displays:
 ## TradingView Pine Script (`COT_Report_Indicator.pine`)
 
 ### Features
-- **Pine Script v5** — `indicator()` with `explicit_plot_display = true`
+- **Pine Script v6** — `indicator()` with `explicit_plot_display = true`
 - Fetches data via TradingView's built-in `COT:` symbol feed (no external data source needed)
 - Supports **21 markets**: Major FX pairs, Metals, Energy, Grains, Equity Indices, Rates
 - Both **Disaggregated** (Fund Managers + Producers) and **Legacy** (Non-Commercial + Commercial) report formats
